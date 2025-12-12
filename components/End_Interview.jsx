@@ -98,17 +98,16 @@ if (!document.head.querySelector('style[data-avatar-animation]')) {
 
 const SpeakingAvatar = ({ isSpeaking, text, questionId }) => {
   const [currentViseme, setCurrentViseme] = useState('closed')
+  const [shouldShow, setShouldShow] = useState(false)
   const visemeTimerRef = useRef(null)
+  const hideTimerRef = useRef(null)
 
-  useEffect(() => {
-    if (isSpeaking && text) {
-      startLipSync(text)
-    } else {
-      stopLipSync()
+  const startLipSync = useCallback((speechText) => {
+    // Clear any existing animation
+    if (visemeTimerRef.current) {
+      clearTimeout(visemeTimerRef.current)
     }
-  }, [isSpeaking, text])
-
-  const startLipSync = (speechText) => {
+    
     // Simple viseme simulation - in real implementation, this would come from TTS API
     const visemes = ['closed', 'small-open', 'medium-open', 'large-open', 'medium-open', 'small-open', 'closed']
     let index = 0
@@ -117,24 +116,54 @@ const SpeakingAvatar = ({ isSpeaking, text, questionId }) => {
       setCurrentViseme(visemes[index % visemes.length])
       index++
       
-      if (isSpeaking) {
+      // Continue animation while speaking
+      if (visemeTimerRef.current) {
         const timing = Math.random() * 200 + 100 // Random timing between 100-300ms
         visemeTimerRef.current = setTimeout(animateVisemes, timing)
       }
     }
     
-    animateVisemes()
-  }
+    // Start animation
+    visemeTimerRef.current = setTimeout(animateVisemes, 100)
+  }, [])
 
-  const stopLipSync = () => {
+  const stopLipSync = useCallback(() => {
     if (visemeTimerRef.current) {
       clearTimeout(visemeTimerRef.current)
+      visemeTimerRef.current = null
     }
     setCurrentViseme('closed')
-  }
+  }, [])
 
-  // Always show avatar when speaking
-  if (!isSpeaking) {
+  useEffect(() => {
+    if (isSpeaking && text) {
+      setShouldShow(true)
+      startLipSync(text)
+      // Clear any pending hide timer
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current)
+        hideTimerRef.current = null
+      }
+    } else {
+      stopLipSync()
+      // Delay hiding the avatar to allow animation to complete
+      hideTimerRef.current = setTimeout(() => {
+        setShouldShow(false)
+      }, 1500) // Increased delay to 1.5 seconds
+    }
+    
+    return () => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current)
+      }
+      if (visemeTimerRef.current) {
+        clearTimeout(visemeTimerRef.current)
+      }
+    }
+  }, [isSpeaking, text, startLipSync, stopLipSync])
+
+  // Show avatar when speaking or during hide delay
+  if (!shouldShow) {
     return null
   }
 
@@ -298,6 +327,7 @@ const End_Interview = ({ interviewID }) => {
   const [speakingFeedback, setSpeakingFeedback] = useState(null)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [speakingQuestionId, setSpeakingQuestionId] = useState(null)
+  const speechTimeoutRef = useRef(null)
   const [openQuestions, setOpenQuestions] = useState({})
   
   // Cleanup effect to reset states when component unmounts
@@ -315,11 +345,34 @@ const End_Interview = ({ interviewID }) => {
   const TexttoSpeech = (text, questionId) => {
     console.log('Speaking feedback for:', { text, questionId });
     
-    // Cancel any existing speech first
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
+    // Clear any pending speech timeout
+    if (speechTimeoutRef.current) {
+      clearTimeout(speechTimeoutRef.current)
+      speechTimeoutRef.current = null
     }
     
+    // Debounce rapid calls - wait 150ms before actually speaking
+    speechTimeoutRef.current = setTimeout(() => {
+      // Prevent multiple simultaneous calls for the same content
+      if (isSpeaking && speakingQuestionId === questionId) {
+        console.log('Already speaking this content, skipping...');
+        return;
+      }
+      
+      // Cancel any existing speech first
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel()
+        // Wait a moment for cancel to take effect
+        setTimeout(() => {
+          startSpeaking(text, questionId)
+        }, 50)
+      } else {
+        startSpeaking(text, questionId)
+      }
+    }, 150) // End of setTimeout debounce
+  }
+
+  const startSpeaking = (text, questionId) => {
     // Set speaking state immediately when starting
     setIsSpeaking(true)
     setSpeakingFeedback(text)
@@ -336,10 +389,12 @@ const End_Interview = ({ interviewID }) => {
         console.log('Speech finished for:', questionId)
         // Add a small delay before resetting states to ensure audio fully stops
         setTimeout(() => {
-          setIsSpeaking(false)
-          setSpeakingFeedback(null)
-          setSpeakingQuestionId(null)
-        }, 200)
+          if (speakingQuestionId === questionId) {
+            setIsSpeaking(false)
+            setSpeakingFeedback(null)
+            setSpeakingQuestionId(null)
+          }
+        }, 300)
       }
       
       utterance.onerror = (event) => {
@@ -354,13 +409,13 @@ const End_Interview = ({ interviewID }) => {
       
       // Fallback: Check if speech is actually speaking after a short delay
       setTimeout(() => {
-        if (!window.speechSynthesis.speaking) {
+        if (!window.speechSynthesis.speaking && speakingQuestionId === questionId) {
           console.log('Speech not actually speaking, resetting states')
           setIsSpeaking(false)
           setSpeakingFeedback(null)
           setSpeakingQuestionId(null)
         }
-      }, 500)
+      }, 1000)
     } else {
       console.error('Speech synthesis not supported')
       // Reset states if TTS not supported
@@ -372,6 +427,12 @@ const End_Interview = ({ interviewID }) => {
 
   const stopSpeaking = () => {
     console.log('Stopping speech for question:', speakingQuestionId);
+    
+    // Clear any pending speech timeout
+    if (speechTimeoutRef.current) {
+      clearTimeout(speechTimeoutRef.current)
+      speechTimeoutRef.current = null
+    }
     
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()

@@ -46,6 +46,8 @@ const INTERVIEW = ({ params }) => {
       // Clean the JSON string - remove markdown code blocks and extra whitespace
       let jsonString = Result[0].jsonMockResp
 
+      console.log('Raw JSON from DB:', jsonString)
+      
       // Remove markdown code blocks if present
       jsonString = jsonString.replace(/```json/gi, '').replace(/```/g, '').trim()
 
@@ -58,15 +60,29 @@ const INTERVIEW = ({ params }) => {
         jsonString = jsonString.substring(firstBrace, lastBrace + 1)
       }
 
+      console.log('Cleaned JSON string:', jsonString)
+      
       const parsedData = JSON.parse(jsonString)
-      console.log('Parsed interview details:', parsedData)
-
+      
+      // Validate structure
+      if (!Array.isArray(parsedData) || parsedData.length !== 5) {
+        throw new Error(`Expected 5 questions, got ${parsedData?.length || 0}`)
+      }
+      
+      parsedData.forEach((item, index) => {
+        if (!item.question || !item.answer) {
+          throw new Error(`Question ${index + 1} missing required fields`)
+        }
+      })
+      
+      console.log('Validated interview details:', parsedData)
       SetInterviewDetails(parsedData)
       setloading(false)
     } catch (error) {
       console.error('Error parsing JSON:', error)
       console.error('Raw JSON string:', Result[0].jsonMockResp)
-      toast.error('Error loading interview details. Please try again.')
+      console.error('Interview ID:', params.interviewID)
+      toast.error('Error loading interview details. Please try creating a new interview.')
       setloading(false)
     }
   }, [params.interviewID])

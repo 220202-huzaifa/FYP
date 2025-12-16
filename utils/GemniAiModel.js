@@ -23,22 +23,16 @@ if (!apiKey) {
 const genAI = new GoogleGenerativeAI(apiKey)
 
 const model = genAI.getGenerativeModel({
-  model: 'gemini-2.5-flash',
+  model: 'gemini-1.5-flash', // Using stable model with better token handling
 })
 
 const generationConfig = {
-  temperature: 1,
-  topP: 0.95,
-  topK: 64,
-  maxOutputTokens: 8192,
+  temperature: 1.2, // Slightly reduced for stability
+  topP: 0.9,
+  topK: 40,
+  maxOutputTokens: 2048, // Reduced to prevent token limit issues
   responseMimeType: 'text/plain',
 }
-
-export const chatSessions = model.startChat({
-  generationConfig,
-  // safetySettings: Adjust safety settings
-  // See https://ai.google.dev/gemini-api/docs/safety-settings
-})
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -49,7 +43,13 @@ export const sendMessageWithRetry = async (
   let lastError
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await chatSessions.sendMessage(prompt)
+      // Create a new chat session for each request to avoid repetition
+      const chatSession = model.startChat({
+        generationConfig,
+        // safetySettings: Adjust safety settings
+        // See https://ai.google.dev/gemini-api/docs/safety-settings
+      })
+      return await chatSession.sendMessage(prompt)
     } catch (error) {
       lastError = error
       const status = error?.response?.status

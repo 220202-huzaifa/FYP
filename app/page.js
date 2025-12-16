@@ -194,34 +194,6 @@ export default function Home() {
 
 const AddInterview = () => {
   const [loading, setloading] = useState(false)
-  const fallbackQuestions = JSON.stringify([
-    {
-      question: 'Describe a complex feature you built end-to-end.',
-      answer:
-        'Outline the problem, your design decisions, trade-offs, testing, and impact.',
-    },
-    {
-      question: 'How do you improve performance in a React/Next.js app?',
-      answer:
-        'Discuss memoization, code-splitting, caching, avoiding unnecessary renders, and monitoring.',
-    },
-    {
-      question: 'Explain how you secure an API and handle authentication.',
-      answer:
-        'Cover auth flows, tokens, rate limiting, validation, logging, and least-privilege.',
-    },
-    {
-      question: 'How do you debug production issues?',
-      answer:
-        'Talk about logs, metrics, tracing, reproduction, feature flags, and rollback plans.',
-    },
-    {
-      question: 'How do you collaborate in a team to deliver features?',
-      answer:
-        'Mention specs, breaking work down, code reviews, communication, and documentation.',
-    },
-  ])
-
   const { user, isSignedIn } = useUser()
   const Router = useRouter()
 
@@ -241,14 +213,18 @@ const AddInterview = () => {
 
     setloading(true)
     try {
-      // Optimized shorter prompt for faster response
-      const InputPrompt = `Job: ${InputValues.Job_Position}, Description: ${InputValues.Job_Description}, Experience: ${InputValues.Year_Of_Experience} years. Generate 5 interview questions with answers in JSON format only.`
+      // Minimal prompt with very short answers to avoid token limits
+      const randomSeed = Math.random().toString(36).substring(7)
+      
+      const InputPrompt = `Generate 5 ${InputValues.Job_Position} questions. JSON: [{"question":"...","answer":"1 sentence max"}]. Session: ${randomSeed}.`
 
       let MockResponse = ''
       try {
-        // Set a timeout for faster fallback
+        console.log('Sending prompt to AI:', InputPrompt.substring(0, 200) + '...')
+        
+        // Increased timeout and removed fallback dependency
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 8000)
+          setTimeout(() => reject(new Error('Timeout')), 15000)
         )
         
         const apiPromise = sendMessageWithRetry(InputPrompt)
@@ -258,20 +234,49 @@ const AddInterview = () => {
           .text()
           .replace('```json', '')
           .replace('```', '')
+          .trim()
+        
+        console.log('Raw AI response:', MockResponse)
+        
+        // Validate JSON structure
+        try {
+          const parsed = JSON.parse(MockResponse)
+          if (!Array.isArray(parsed) || parsed.length !== 5 || 
+              !parsed.every(item => item.question && item.answer)) {
+            console.error('Invalid AI response structure:', parsed)
+            throw new Error(`Invalid structure: expected 5 questions with question/answer fields, got ${parsed?.length || 0} items`)
+          }
+          console.log('Successfully validated AI response')
+        } catch (validationErr) {
+          console.error('AI response validation failed:', validationErr)
+          console.error('Response that failed validation:', MockResponse)
+          throw new Error('AI generated invalid response format. Please try again.')
+        }
       } catch (err) {
-        console.warn('AI generation failed or timed out, using fallback questions', err)
-        // Immediately use fallback questions
-        MockResponse = fallbackQuestions
+        console.error('AI generation failed:', err)
+        
+        // Handle token limit specifically
+        if (err.message.includes('token limit') || err.message.includes('exceeded')) {
+          throw new Error('AI response too long. Please try again with simpler job description.')
+        }
+        
+        // Don't use fallback - show error to user
+        throw new Error('Failed to generate questions: ' + err.message)
       }
 
       if (!MockResponse) {
-        MockResponse = fallbackQuestions
+        throw new Error('AI returned empty response')
       }
 
+      const generatedMockId = uuidv4()
+      console.log('Creating interview with MockId:', generatedMockId)
+      console.log('Random seed used:', randomSeed)
+      console.log('Full AI response:', MockResponse)
+      
       const Response_Of_DB = await db
         .insert(MockInterview)
         .values({
-          MockId: uuidv4(),
+          MockId: generatedMockId,
           jsonMockResp: MockResponse,
           JobPosition: InputValues.Job_Position,
           JobDescription: InputValues.Job_Description,
@@ -281,6 +286,7 @@ const AddInterview = () => {
         })
         .returning({ MockId: MockInterview.MockId })
 
+      console.log('Interview created with ID:', Response_Of_DB[0]?.MockId)
       Router.push(`/Interview/${Response_Of_DB[0]?.MockId}`)
     } catch (error) {
       console.error('Failed to generate mock interview', error)
